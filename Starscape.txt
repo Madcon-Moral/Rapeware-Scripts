@@ -1,0 +1,682 @@
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
+local features = Workspace:WaitForChild("Features")
+local shipsFolder = Workspace:WaitForChild("NPCs"):WaitForChild("Space"):WaitForChild("Ships")
+local containers = Workspace:WaitForChild("Containers")
+
+-- Ore Autopickup
+
+local oreQueue = {} -- ores waiting to be mined
+local busy = false -- if ship is already moving
+local autoPickOre = false
+
+local function getMyShip()
+    local shipsFolder = workspace:WaitForChild("Ships")
+    local playerFolder = shipsFolder:FindFirstChild(player.Name)
+    if not playerFolder then return nil end
+
+    for _, child in ipairs(playerFolder:GetChildren()) do
+        if child:IsA("Model") then
+            return child
+        end
+    end
+
+    return nil
+end
+
+
+local function tweenShipTo(ship, goalPos, onComplete)
+    local currentCFrame = ship:GetPivot()
+    local goalCFrame = CFrame.lookAt(goalPos, goalPos + Vector3.new(0, 0, -1))
+
+    local facing = (goalPos - currentCFrame.Position).Unit
+    goalCFrame = CFrame.lookAt(goalPos, goalPos + facing, Vector3.new(0, 1, 0))
+
+    local distance = (currentCFrame.Position - goalPos).Magnitude
+    local speed = 160 -- studs per second
+    local time = math.clamp(distance / speed, 0.2, 5)
+
+    local cfValue = Instance.new("CFrameValue")
+    cfValue.Value = currentCFrame
+
+    cfValue.Changed:Connect(function(newCFrame)
+        ship:PivotTo(newCFrame)
+    end)
+
+    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(cfValue, tweenInfo, {Value = goalCFrame})
+
+    tween.Completed:Connect(function()
+        cfValue:Destroy()
+        if onComplete then onComplete() end
+    end)
+
+    tween:Play()
+end
+
+local function getClosestOre(ship)
+    local closest, minDist
+    local shipPos = ship:GetPivot().Position
+    for i, data in ipairs(oreQueue) do
+        if data.ore and data.ore.Parent then -- ore still exists
+            local dist = (shipPos - data.pos).Magnitude
+            if not minDist or dist < minDist then
+                closest, minDist = i, dist
+            end
+        end
+    end
+    return closest
+end
+
+local function processNextOre()
+    if busy or #oreQueue == 0 then return end
+    busy = true
+
+    local myShip = getMyShip()
+    if not myShip then
+        busy = false
+        return
+    end
+
+    local index = getClosestOre(myShip)
+    if not index then
+        busy = false
+        return
+    end
+
+    local data = table.remove(oreQueue, index)
+    local orePos = data.pos
+    local oreProcessed = false
+
+    -- If picking up ore is within x time
+    task.delay(7, function()
+        if not oreProcessed then
+            busy = false
+            processNextOre()
+        end
+    end)
+
+    tweenShipTo(myShip, orePos, function()
+        oreProcessed = true
+        task.wait(0.3) -- simulate pickup delay
+        busy = false
+        processNextOre()
+    end)
+end
+
+-- When new ore spawns, add to queue
+workspace:WaitForChild("Ores").ChildAdded:Connect(function(ore)
+    if not autoPickOre then return end
+    task.wait(0.05) -- wait for ore to load
+
+    local orePos
+    if ore:IsA("Model") then
+        local primary = ore.PrimaryPart or ore:FindFirstChildWhichIsA("BasePart")
+        if primary then orePos = primary.Position end
+    elseif ore:IsA("BasePart") then
+        orePos = ore.Position
+    end
+
+    if orePos then
+        print("Queued ore:", ore.Name)
+        table.insert(oreQueue, {pos = orePos, ore = ore})
+        processNextOre()
+    end
+end)
+
+
+
+-- ORE ESP
+local ESPs = {}
+local oreESP = false
+
+local function clearESPs()
+    for _, data in ipairs(ESPs) do
+        if data.esp then
+            data.esp:Remove()
+        end
+    end
+    ESPs = {}
+end
+
+local function createESPs()
+    clearESPs()
+    if not oreESP then return end
+    
+    for _, field in ipairs(features:GetChildren()) do
+        if field:IsA("Model") and field.Name == "AsteroidField" then
+            for _, asteroid in ipairs(field:GetChildren()) do
+                local mineral = asteroid:FindFirstChild("Mineral")
+                if mineral then
+                    local tracker = mineral:FindFirstChild("Tracker")
+                    if tracker and tracker:IsA("StringValue") then
+                        local part = asteroid:FindFirstChildWhichIsA("BasePart")
+                        if part then
+                            local ESP = Drawing.new("Text")
+                            local oreName = tracker:GetAttribute("Title")
+                            local oreLower = oreName:lower()
+
+                            if oreLower:find("axnit") or oreLower:find("water") or oreLower:find("narcor") or oreLower:find("red narcor") then
+                                local ESP = Drawing.new("Text")
+                                ESP.Size = 14
+                                ESP.Center = true
+                                ESP.Color = Color3.fromRGB(255, 255, 6)
+                                ESP.Transparency = 0.7
+                                ESP.Font = 3
+                                ESP.Text = oreName
+                                ESP.Visible = false
+
+                                table.insert(ESPs, {esp = ESP, part = part})
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+features.ChildAdded:Connect(function(child)
+    if child:IsA("Model") and child.Name == "AsteroidField" then
+        createESPs()
+    end
+end)
+
+features.ChildRemoved:Connect(function(child)
+    if child:IsA("Model") and child.Name == "AsteroidField" then
+        createESPs()
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    for _, data in ipairs(ESPs) do
+        local part = data.part
+        if part and part.Parent then
+            local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+            if onScreen and screenPos.Z > 0 then
+                data.esp.Position = Vector2.new(screenPos.X, screenPos.Y - 15)
+                data.esp.Visible = true
+            else
+                data.esp.Visible = false
+            end
+        else
+            data.esp.Visible = false
+        end
+    end
+end)
+
+-- WRECK ESP
+local wreckESPs = {}
+local wreckESP = false
+
+local function clearWreckESPs()
+    for _, data in ipairs(wreckESPs) do
+        if data.esp then
+            data.esp:Remove()
+        end
+    end
+    wreckESPs = {}
+end
+
+local function getContentsText(contentsFolder)
+    local lines = {}
+    for _, val in ipairs(contentsFolder:GetChildren()) do
+        if val:IsA("IntValue") then
+            table.insert(lines, val.Name .. ": " .. tostring(val.Value))
+        end
+    end
+    return table.concat(lines, " | ")
+end
+
+local function findAnchorPart(wreck)
+    for _, descendant in ipairs(wreck:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            return descendant
+        end
+    end
+    return nil
+end
+
+local function createWreckESPs()
+    clearWreckESPs()
+    if not wreckESP then return end
+
+    for _, wreck in ipairs(containers:GetChildren()) do
+        local contents = wreck:FindFirstChild("Contents")
+        if contents then
+            local part = findAnchorPart(wreck)
+
+            if part then
+                local ESP = Drawing.new("Text")
+                ESP.Size = 14
+                ESP.Center = true
+                ESP.Color = Color3.fromRGB(0, 200, 255)
+                ESP.Transparency = 0.7
+                ESP.Font = 3
+                ESP.Text = getContentsText(contents)
+                ESP.Visible = false
+
+                -- Update when contents change
+                local function updateText()
+                    ESP.Text = getContentsText(contents)
+                end
+                contents.ChildAdded:Connect(updateText)
+                contents.ChildRemoved:Connect(updateText)
+                for _, child in ipairs(contents:GetChildren()) do
+                    if child:IsA("IntValue") then
+                        child:GetPropertyChangedSignal("Value"):Connect(updateText)
+                    end
+                end
+
+                table.insert(wreckESPs, {esp = ESP, part = part, contents = contents})
+            else
+                warn("No BasePart found for wreck:", wreck.Name)
+            end
+        end
+    end
+end
+
+containers.ChildAdded:Connect(function(child)
+    if child:FindFirstChild("Contents") then
+        createWreckESPs()
+    end
+end)
+containers.ChildRemoved:Connect(function(child)
+    if child:FindFirstChild("Contents") then
+        createWreckESPs()
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    for _, data in ipairs(wreckESPs) do
+        local part = data.part
+        if part and part.Parent then
+            local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+            if onScreen and screenPos.Z > 0 then
+                data.esp.Position = Vector2.new(screenPos.X, screenPos.Y - 15)
+                data.esp.Visible = true
+            else
+                data.esp.Visible = false
+            end
+        else
+            data.esp.Visible = false
+        end
+    end
+end)
+
+-- NPC ENEMIES ESP
+local shipESPs = {}
+local shipESP = false 
+
+local function clearShipESPs()
+    for _, data in ipairs(shipESPs) do
+        if data.esp then
+            data.esp:Remove()
+        end
+    end
+    shipESPs = {}
+end
+
+local function findAnchorPart(model)
+    if model.PrimaryPart then
+        return model.PrimaryPart
+    end
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            return descendant
+        end
+    end
+    return nil
+end
+
+local function buildShipText(ship)
+    local text = ship.Name
+    local stats = ship:FindFirstChild("ship") and ship.ship:FindFirstChild("stats")
+    if stats then
+        local hull = stats:FindFirstChild("hull")
+        local shields = stats:FindFirstChild("shields")
+
+        local extras = {}
+        if hull and hull:IsA("NumberValue") then
+            table.insert(extras, "Hull: " .. hull.Value)
+        end
+        if shields and shields:IsA("NumberValue") then
+            table.insert(extras, "Shields: " .. shields.Value)
+        end
+
+        if #extras > 0 then
+            text = text .. " [" .. table.concat(extras, " | ") .. "]"
+        end
+    end
+    return text
+end
+
+local function createShipESPs()
+    clearShipESPs()
+    if not shipESP then return end
+
+    for _, ship in ipairs(shipsFolder:GetChildren()) do
+        if ship:IsA("Model") then
+            local part = findAnchorPart(ship)
+            if part then
+                local ESP = Drawing.new("Text")
+                ESP.Size = 14
+                ESP.Center = true
+                ESP.Color = Color3.fromRGB(255, 0, 0)
+                ESP.Transparency = 0.7
+                ESP.Font = 3
+                ESP.Text = buildShipText(ship)
+                ESP.Visible = false
+
+                table.insert(shipESPs, {esp = ESP, part = part, ship = ship})
+            else
+                warn("No BasePart found in ship:", ship.Name)
+            end
+        end
+    end
+end
+
+shipsFolder.ChildAdded:Connect(function(child)
+    if child:IsA("Model") then
+        createShipESPs()
+    end
+end)
+shipsFolder.ChildRemoved:Connect(function(child)
+    if child:IsA("Model") then
+        createShipESPs()
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    for _, data in ipairs(shipESPs) do
+        local part = data.part
+        local ship = data.ship
+        if part and part.Parent and ship and ship.Parent then
+            local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+            if onScreen and screenPos.Z > 0 then
+                data.esp.Position = Vector2.new(screenPos.X, screenPos.Y - 15)
+                data.esp.Text = buildShipText(ship) -- update live
+                data.esp.Visible = true
+            else
+                data.esp.Visible = false
+            end
+        else
+            data.esp.Visible = false
+        end
+    end
+end)
+
+-- CHASE ENEMY
+
+local busy = false
+local currentTarget = nil
+local autoHuntEnemies = true
+local tweenConnection = nil -- so we can stop mid-flight
+local chase = false
+
+local function getMyShip()
+    local shipsFolder = workspace:WaitForChild("Ships")
+    local playerFolder = shipsFolder:FindFirstChild(player.Name)
+    if not playerFolder then return nil end
+
+    for _, child in ipairs(playerFolder:GetChildren()) do
+        if child:IsA("Model") then
+            return child
+        end
+    end
+    return nil
+end
+
+local function tweenShipTo(ship, goalPos, duration, onComplete)
+    local currentCFrame = ship:GetPivot()
+    local facing = (goalPos - currentCFrame.Position).Unit
+    local goalCFrame = CFrame.lookAt(goalPos, goalPos + facing, Vector3.new(0, 1, 0))
+
+    local cfValue = Instance.new("CFrameValue")
+    cfValue.Value = currentCFrame
+
+    tweenConnection = cfValue.Changed:Connect(function(newCFrame)
+        ship:PivotTo(newCFrame)
+    end)
+
+    local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(cfValue, tweenInfo, {Value = goalCFrame})
+
+    tween.Completed:Connect(function()
+        tweenConnection:Disconnect()
+        cfValue:Destroy()
+        if onComplete then onComplete() end
+    end)
+
+    tween:Play()
+    return tween
+end
+
+local function cancelCurrentTween()
+    if tweenConnection then
+        tweenConnection:Disconnect()
+        tweenConnection = nil
+    end
+end
+
+local function getBelowPos(enemy, distance)
+    local primary = enemy.PrimaryPart or enemy:FindFirstChildWhichIsA("BasePart")
+    if not primary then return nil end
+    local upVector = primary.CFrame.UpVector
+    return primary.Position - (upVector * distance)
+end
+
+local function getAbovePos(enemy, distance)
+    local primary = enemy.PrimaryPart or enemy:FindFirstChildWhichIsA("BasePart")
+    if not primary then return nil end
+    local upVector = primary.CFrame.UpVector
+    return primary.Position + (upVector * distance)
+end
+
+-- Continuously chase one enemy until hull == 0 or timeout
+local function chaseEnemy(enemy)
+    if busy then return end
+    busy = true
+    currentTarget = enemy
+
+    local myShip = getMyShip()
+    if not myShip or not enemy or not enemy.Parent then
+        busy = false
+        return
+    end
+
+    local stats = enemy:FindFirstChild("ship") and enemy.ship:FindFirstChild("stats")
+    if not stats or not stats:FindFirstChild("hull") then
+        print("Enemy has no hull stat, aborting...")
+        busy = false
+        return
+    end
+
+    -- start chase timer
+    local startTime = tick()
+
+    -- Chasing loop
+    task.spawn(function()
+        while enemy.Parent and stats.hull.Value > 0 and autoHuntEnemies and chase do
+            -- ⏳ timeout after 10 seconds
+            if tick() - startTime > 10 then
+                print("Timeout reached, disengaging:", enemy.Name)
+                break
+            end
+
+            local trailPos = getAbovePos(enemy, 1) -- stay 50 studs below
+            if not trailPos then break end
+
+            cancelCurrentTween()
+
+            local myPos = myShip:GetPivot().Position
+            local dist = (myPos - trailPos).Magnitude
+            local speed = 400
+            local duration = math.clamp(dist / speed, 0.1, 1)
+
+            tweenShipTo(myShip, trailPos, duration)
+
+            task.wait(0.2) -- refresh target often
+        end
+
+        -- cleanup
+        cancelCurrentTween()
+        if stats and stats:FindFirstChild("hull") and stats.hull.Value <= 0 then
+            print("Enemy destroyed:", enemy.Name)
+        else
+            print("Enemy lost or chase cancelled:", enemy.Name)
+        end
+        busy = false
+        currentTarget = nil
+    end)
+end
+
+local function getClosestEnemy()
+    local myShip = getMyShip()
+    if not myShip then return nil end
+
+    local myPos = myShip:GetPivot().Position
+    local closest, minDist
+
+    for _, enemy in ipairs(workspace.NPCs.Space.Ships:GetChildren()) do
+        if enemy:IsA("Model") then
+            local lowerName = string.lower(enemy.Name)
+            if not (string.find(lowerName, "kavani") or string.find(lowerName, "neutral")) then
+                local primary = enemy.PrimaryPart or enemy:FindFirstChildWhichIsA("BasePart")
+                if primary then
+                    local dist = (myPos - primary.Position).Magnitude
+                    if dist <= 1500 and (not minDist or dist < minDist) then
+                        closest, minDist = enemy, dist
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- Main loop
+task.spawn(function()
+    while task.wait(2) do
+        if chase and autoHuntEnemies and not busy then
+            print("chase enabled")
+            local enemy = getClosestEnemy()
+            if enemy then
+                chaseEnemy(enemy)
+            end
+        end
+    end
+end)
+
+
+
+
+
+--UI
+
+local Decimals = 4
+local Clock = os.clock()
+local ValueText = "Value Is Now :"
+
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/drillygzzly/Roblox-UI-Libs/main/1%20Tokyo%20Lib%20(FIXED)/Tokyo%20Lib%20Source.lua"))({
+    cheatname = "Private Script", -- watermark text
+    gamename = "Starscape", -- watermark text
+})
+
+library:init()
+
+local Window1  = library.NewWindow({
+    title = "Private Script | Starscape | sanketsu.girl on discord", -- Mainwindow Text
+    size = UDim2.new(0, 510, 0.6, 6
+)})
+
+local Tab1 = Window1:AddTab("  Mining  ")
+local SettingsTab = library:CreateSettingsTab(Window1)
+
+--Tab1:SetText("Text")
+
+local Section1 = Tab1:AddSection("All Executor", 1)
+--Section1:SetText("Text")
+
+Section1:AddToggle({
+    text = "Auto Pickup Ore (Legit)",
+    state = false,
+    risky = true,
+    tooltip = "Picks up ore by tweening you into the ore within a radius",
+    flag = "Toggle_1",
+    risky = false,
+    callback = function(v)
+        autoPickOre = not autoPickOre
+    end
+})
+
+Section1:AddToggle({
+    text = "Chase NPC Enemies",
+    state = false,
+    risky = true,
+    tooltip = "Tweens you into enemy npcs to deal a lot of damage",
+    flag = "Toggle_1",
+    risky = false,
+    callback = function(v)
+        chase = not chase
+    end
+})
+
+Section1:AddToggle({
+    text = "Ore ESP",
+    state = false,
+    risky = true,
+    tooltip = "Searches for rare ores",
+    flag = "Toggle_1",
+    risky = false,
+    callback = function(v)
+        oreESP = not oreESP
+        if not oreESP then
+            clearESPs()
+            return 
+        end
+        createESPs()
+    end
+})
+
+Section1:AddToggle({
+    text = "Wreckage ESP",
+    state = false,
+    risky = true,
+    tooltip = "Search for wreckages and show its current content",
+    flag = "Toggle_1",
+    risky = false,
+    callback = function(v)
+        wreckESP = not wreckESP
+        if not wreckESP then
+            clearWreckESPs()
+            return 
+        end
+        createWreckESPs()
+    end
+})
+
+Section1:AddToggle({
+    text = "NPC Ship ESP",
+    state = false,
+    risky = true,
+    tooltip = "ESP For NPC SHIPS",
+    flag = "Toggle_1",
+    risky = false,
+    callback = function(v)
+        shipESP = not shipESP
+        if not shipESP then
+            clearShipESPs()
+            return 
+        end
+        createShipESPs()
+    end
+})
+
+
+local Time = (string.format("%."..tostring(Decimals).."f", os.clock() - Clock))
+library:SendNotification(("Loaded In "..tostring(Time)), 6)
