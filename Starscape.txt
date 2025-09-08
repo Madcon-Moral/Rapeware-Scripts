@@ -7,9 +7,10 @@ local Camera = Workspace.CurrentCamera
 local features = Workspace:WaitForChild("Features")
 local shipsFolder = Workspace:WaitForChild("NPCs"):WaitForChild("Space"):WaitForChild("Ships")
 local containers = Workspace:WaitForChild("Containers")
+local TakeAllFromContainer = game.ReplicatedStorage.Remote.Items.TakeAllFromContainer
+
 
 -- Ore Autopickup
-
 local oreQueue = {} -- ores waiting to be mined
 local busy = false -- if ship is already moving
 local autoPickOre = false
@@ -18,21 +19,15 @@ local function getMyShip()
     local shipsFolder = workspace:WaitForChild("Ships")
     local playerFolder = shipsFolder:FindFirstChild(player.Name)
     if not playerFolder then return nil end
-
     for _, child in ipairs(playerFolder:GetChildren()) do
-        if child:IsA("Model") then
-            return child
-        end
+        if child:IsA("Model") then return child end
     end
-
     return nil
 end
-
 
 local function tweenShipTo(ship, goalPos, onComplete)
     local currentCFrame = ship:GetPivot()
     local goalCFrame = CFrame.lookAt(goalPos, goalPos + Vector3.new(0, 0, -1))
-
     local facing = (goalPos - currentCFrame.Position).Unit
     goalCFrame = CFrame.lookAt(goalPos, goalPos + facing, Vector3.new(0, 1, 0))
 
@@ -42,19 +37,16 @@ local function tweenShipTo(ship, goalPos, onComplete)
 
     local cfValue = Instance.new("CFrameValue")
     cfValue.Value = currentCFrame
-
     cfValue.Changed:Connect(function(newCFrame)
         ship:PivotTo(newCFrame)
     end)
 
     local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
     local tween = TweenService:Create(cfValue, tweenInfo, {Value = goalCFrame})
-
     tween.Completed:Connect(function()
         cfValue:Destroy()
         if onComplete then onComplete() end
     end)
-
     tween:Play()
 end
 
@@ -77,16 +69,10 @@ local function processNextOre()
     busy = true
 
     local myShip = getMyShip()
-    if not myShip then
-        busy = false
-        return
-    end
+    if not myShip then busy = false return end
 
     local index = getClosestOre(myShip)
-    if not index then
-        busy = false
-        return
-    end
+    if not index then busy = false return end
 
     local data = table.remove(oreQueue, index)
     local orePos = data.pos
@@ -128,17 +114,13 @@ workspace:WaitForChild("Ores").ChildAdded:Connect(function(ore)
     end
 end)
 
-
-
 -- ORE ESP
 local ESPs = {}
 local oreESP = false
 
 local function clearESPs()
     for _, data in ipairs(ESPs) do
-        if data.esp then
-            data.esp:Remove()
-        end
+        if data.esp then data.esp:Remove() end
     end
     ESPs = {}
 end
@@ -146,7 +128,7 @@ end
 local function createESPs()
     clearESPs()
     if not oreESP then return end
-    
+
     for _, field in ipairs(features:GetChildren()) do
         if field:IsA("Model") and field.Name == "AsteroidField" then
             for _, asteroid in ipairs(field:GetChildren()) do
@@ -159,8 +141,7 @@ local function createESPs()
                             local ESP = Drawing.new("Text")
                             local oreName = tracker:GetAttribute("Title")
                             local oreLower = oreName:lower()
-
-                            if oreLower:find("axnit") or oreLower:find("water") or oreLower:find("narcor") or oreLower:find("red narcor") then
+                            if oreLower:find("axnit") or oreLower:find("water") or oreLower:find("narcor") or oreLower:find("red narcor") or oreLower:find("superior") or oreLower:find("pristine") then
                                 local ESP = Drawing.new("Text")
                                 ESP.Size = 14
                                 ESP.Center = true
@@ -169,7 +150,6 @@ local function createESPs()
                                 ESP.Font = 3
                                 ESP.Text = oreName
                                 ESP.Visible = false
-
                                 table.insert(ESPs, {esp = ESP, part = part})
                             end
                         end
@@ -215,9 +195,7 @@ local wreckESP = false
 
 local function clearWreckESPs()
     for _, data in ipairs(wreckESPs) do
-        if data.esp then
-            data.esp:Remove()
-        end
+        if data.esp then data.esp:Remove() end
     end
     wreckESPs = {}
 end
@@ -234,9 +212,7 @@ end
 
 local function findAnchorPart(wreck)
     for _, descendant in ipairs(wreck:GetDescendants()) do
-        if descendant:IsA("BasePart") then
-            return descendant
-        end
+        if descendant:IsA("BasePart") then return descendant end
     end
     return nil
 end
@@ -249,7 +225,6 @@ local function createWreckESPs()
         local contents = wreck:FindFirstChild("Contents")
         if contents then
             local part = findAnchorPart(wreck)
-
             if part then
                 local ESP = Drawing.new("Text")
                 ESP.Size = 14
@@ -281,14 +256,11 @@ local function createWreckESPs()
 end
 
 containers.ChildAdded:Connect(function(child)
-    if child:FindFirstChild("Contents") then
-        createWreckESPs()
-    end
+    if child:FindFirstChild("Contents") then createWreckESPs() end
 end)
+
 containers.ChildRemoved:Connect(function(child)
-    if child:FindFirstChild("Contents") then
-        createWreckESPs()
-    end
+    if child:FindFirstChild("Contents") then createWreckESPs() end
 end)
 
 RunService.RenderStepped:Connect(function()
@@ -310,25 +282,19 @@ end)
 
 -- NPC ENEMIES ESP
 local shipESPs = {}
-local shipESP = false 
+local shipESP = false
 
 local function clearShipESPs()
     for _, data in ipairs(shipESPs) do
-        if data.esp then
-            data.esp:Remove()
-        end
+        if data.esp then data.esp:Remove() end
     end
     shipESPs = {}
 end
 
 local function findAnchorPart(model)
-    if model.PrimaryPart then
-        return model.PrimaryPart
-    end
+    if model.PrimaryPart then return model.PrimaryPart end
     for _, descendant in ipairs(model:GetDescendants()) do
-        if descendant:IsA("BasePart") then
-            return descendant
-        end
+        if descendant:IsA("BasePart") then return descendant end
     end
     return nil
 end
@@ -339,7 +305,6 @@ local function buildShipText(ship)
     if stats then
         local hull = stats:FindFirstChild("hull")
         local shields = stats:FindFirstChild("shields")
-
         local extras = {}
         if hull and hull:IsA("NumberValue") then
             table.insert(extras, "Hull: " .. hull.Value)
@@ -347,7 +312,6 @@ local function buildShipText(ship)
         if shields and shields:IsA("NumberValue") then
             table.insert(extras, "Shields: " .. shields.Value)
         end
-
         if #extras > 0 then
             text = text .. " [" .. table.concat(extras, " | ") .. "]"
         end
@@ -371,7 +335,6 @@ local function createShipESPs()
                 ESP.Font = 3
                 ESP.Text = buildShipText(ship)
                 ESP.Visible = false
-
                 table.insert(shipESPs, {esp = ESP, part = part, ship = ship})
             else
                 warn("No BasePart found in ship:", ship.Name)
@@ -381,14 +344,11 @@ local function createShipESPs()
 end
 
 shipsFolder.ChildAdded:Connect(function(child)
-    if child:IsA("Model") then
-        createShipESPs()
-    end
+    if child:IsA("Model") then createShipESPs() end
 end)
+
 shipsFolder.ChildRemoved:Connect(function(child)
-    if child:IsA("Model") then
-        createShipESPs()
-    end
+    if child:IsA("Model") then createShipESPs() end
 end)
 
 RunService.RenderStepped:Connect(function()
@@ -411,7 +371,6 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- CHASE ENEMY
-
 local busy = false
 local currentTarget = nil
 local autoHuntEnemies = true
@@ -422,11 +381,8 @@ local function getMyShip()
     local shipsFolder = workspace:WaitForChild("Ships")
     local playerFolder = shipsFolder:FindFirstChild(player.Name)
     if not playerFolder then return nil end
-
     for _, child in ipairs(playerFolder:GetChildren()) do
-        if child:IsA("Model") then
-            return child
-        end
+        if child:IsA("Model") then return child end
     end
     return nil
 end
@@ -438,20 +394,17 @@ local function tweenShipTo(ship, goalPos, duration, onComplete)
 
     local cfValue = Instance.new("CFrameValue")
     cfValue.Value = currentCFrame
-
     tweenConnection = cfValue.Changed:Connect(function(newCFrame)
         ship:PivotTo(newCFrame)
     end)
 
     local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
     local tween = TweenService:Create(cfValue, tweenInfo, {Value = goalCFrame})
-
     tween.Completed:Connect(function()
         tweenConnection:Disconnect()
         cfValue:Destroy()
         if onComplete then onComplete() end
     end)
-
     tween:Play()
     return tween
 end
@@ -496,52 +449,54 @@ local function chaseEnemy(enemy)
         return
     end
 
-    -- start chase timer
     local startTime = tick()
 
-    -- Chasing loop
     task.spawn(function()
         while enemy.Parent and stats.hull.Value > 0 and autoHuntEnemies and chase do
-            -- ⏳ timeout after 10 seconds
             if tick() - startTime > 10 then
                 print("Timeout reached, disengaging:", enemy.Name)
                 break
             end
 
-            local trailPos = getAbovePos(enemy, 10)
-            if not trailPos then break end
-
-            cancelCurrentTween()
+            local primary = enemy.PrimaryPart or enemy:FindFirstChildWhichIsA("BasePart")
+            if not primary then break end
 
             local myPos = myShip:GetPivot().Position
-            local dist = (myPos - trailPos).Magnitude
-            local speed = 400
-            local duration = math.clamp(dist / speed, 0.1, 1)
+            local targetPos = primary.Position - (primary.CFrame.RightVector * 30) 
+            local direction = targetPos - myPos
+            local distance = direction.Magnitude
 
-            tweenShipTo(myShip, trailPos, duration)
 
-            task.wait(0.2) -- refresh target often
+            if distance > 0 then
+                local moveDelta = direction.Unit * math.min(distance, 800 * 0.06) -- speed * frame time
+
+                -- Update ship's CFrame to move and look at the enemy
+                local newCFrame = CFrame.lookAt(myPos + moveDelta, primary.Position, Vector3.new(0, 1, 0))
+                myShip:PivotTo(newCFrame)
+            end
+
+            task.wait(0.03) -- smooth frame update
         end
 
-        -- cleanup
-        cancelCurrentTween()
+        -- Cleanup after chase ends
         if stats and stats:FindFirstChild("hull") and stats.hull.Value <= 0 then
             print("Enemy destroyed:", enemy.Name)
         else
             print("Enemy lost or chase cancelled:", enemy.Name)
         end
+
         busy = false
         currentTarget = nil
     end)
 end
 
+
 local function getClosestEnemy()
     local myShip = getMyShip()
     if not myShip then return nil end
-
     local myPos = myShip:GetPivot().Position
-    local closest, minDist
 
+    local closest, minDist
     for _, enemy in ipairs(workspace.NPCs.Space.Ships:GetChildren()) do
         if enemy:IsA("Model") then
             local lowerName = string.lower(enemy.Name)
@@ -565,18 +520,25 @@ task.spawn(function()
         if chase and autoHuntEnemies and not busy then
             print("chase enabled")
             local enemy = getClosestEnemy()
-            if enemy then
-                chaseEnemy(enemy)
+            if enemy then chaseEnemy(enemy) end
+        end
+    end
+end)
+
+-- Auto Loot Wreck
+local autoWreck = false
+
+task.spawn(function()
+    while task.wait(1) do
+        if autoWreck then
+            for _, wreck in ipairs(containers:GetChildren()) do
+                TakeAllFromContainer:FireServer(wreck)
             end
         end
     end
 end)
 
-
-
-
-
---UI
+-- UI
 
 local Decimals = 4
 local Clock = os.clock()
@@ -623,6 +585,18 @@ Section1:AddToggle({
     risky = false,
     callback = function(v)
         chase = not chase
+    end
+})
+
+Section1:AddToggle({
+    text = "Auto loot wreckages",
+    state = false,
+    risky = true,
+    tooltip = "Automatically loot wreckages if youre within its distance (<500m)",
+    flag = "Toggle_1",
+    risky = false,
+    callback = function(v)
+        autoWreck = not autoWreck
     end
 })
 
@@ -681,4 +655,3 @@ Section1:AddToggle({
 local Time = (string.format("%."..tostring(Decimals).."f", os.clock() - Clock))
 
 library:SendNotification(("Loaded In "..tostring(Time)), 6)
-
